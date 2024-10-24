@@ -310,8 +310,10 @@ func main() {
 		}
 	})
 
+	logged.StaticFile("/", "./website/homepage.html")
+	logged.Static("/static", "./website")
 	logged.Static("/boardwalk", "./exported-game")
-	logged.GET("/", func(ctx *gin.Context) { ctx.Redirect(http.StatusTemporaryRedirect, "/boardwalk") })
+	logged.StaticFile("/manual", "./exported-manual/Prototype User Manual.pdf")
 	logged.POST("/api/simplify", simplifyImage)
 	logged.POST("/api/build-level", buildLevel)
 	router.GET("/api/ws", connectWebsocket)
