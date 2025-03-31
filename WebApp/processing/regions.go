@@ -3,33 +3,37 @@ package processing
 import (
 	"image"
 	"image/color"
-	"slices"
 )
 
-func BuildRegionMap(img image.Image, options RegionMapOptions, predicate func(*Region) bool) *RegionMap {
-	regionMap := RegionMap{make([]*Region, 0, 20), make(map[Pixel]*RegionIndex, (img.Bounds().Dx()*img.Bounds().Dy())/4), make([]*RegionIndex, 0), options}
+func BuildRegionMap(img image.Image, options RegionMapOptions, regionFilter func(Region) bool) *RegionMap {
+	dx, dy := img.Bounds().Dx(), img.Bounds().Dy()
+	regionMap := RegionMap{make([]Region, 0, 20), make([][]RegionId, dy), options}
+	for i := range regionMap.pixels {
+		regionMap.pixels[i] = make([]RegionId, dx)
+	}
 
 	bd := img.Bounds()
 
 	for y := bd.Min.Y; y < bd.Max.Y; y++ {
 		for x := bd.Min.X; x < bd.Max.X; x++ {
 			pixel := Pixel{uint16(x), uint16(y)}
-			c := img.At(x, y)
-			if c != Blank && (regionMap.options.AllowWhite || c != White) {
-				regionMap.AddPixelToRegionMap(pixel, img)
+			if !regionMap.GetPixelHasRegion(pixel) {
+				c := img.At(x, y)
+				if c != Blank && (regionMap.options.AllowWhite || c != White) {
+					regionMap.AddPixelToRegionMap(pixel, img)
+				}
 			}
 		}
 	}
 
-	if predicate != nil {
+	if regionFilter != nil {
 		for i, region := range regionMap.regions {
-			if region != nil && !predicate(region) {
+			if region != nil && !regionFilter(region) {
 				regionMap.regions[i] = nil
 			}
 		}
 	}
 
-	regionMap.CleanupRegionMap()
 	return &regionMap
 }
 
@@ -42,103 +46,75 @@ type Vertex struct {
 	Y uint16 `json:"y"`
 }
 
-type RegionIndex int
+type RegionId uint
+
+func (r RegionId) GetRegionIndex() int {
+	return int(r - 1)
+}
+
 type Region []Pixel
 
 type RegionMap struct {
-	regions        []*Region
-	pixels         map[Pixel]*RegionIndex
-	regionPointers []*RegionIndex
-	options        RegionMapOptions
+	regions []Region
+	pixels  [][]RegionId
+	options RegionMapOptions
 }
 
 type RegionMapOptions struct {
 	NoColorSeparation, AllowWhite bool
 }
 
-func (rm *RegionMap) NewRegion(pixel Pixel) (region *RegionIndex) {
-	region = new(RegionIndex)
-	*region = RegionIndex(len(rm.regions))
-	rm.regions = append(rm.regions, &Region{pixel})
-	rm.pixels[pixel] = region
-	rm.regionPointers = append(rm.regionPointers, region)
+func (rm *RegionMap) NewRegion(pixel Pixel) (region RegionId) {
+	region = RegionId(len(rm.regions) + 1)
+	rm.regions = append(rm.regions, Region{pixel})
+	rm.pixels[pixel.Y][pixel.X] = region
 	return
 }
 
-func (rm *RegionMap) AddPixelToRegion(pixel Pixel, region *RegionIndex) {
-	newPixelArray := append((*rm.regions[*region]), pixel)
-	rm.regions[*region] = &newPixelArray
-	rm.pixels[pixel] = region
+func (rm *RegionMap) AddPixelToRegion(pixel Pixel, region RegionId) {
+	rm.regions[region.GetRegionIndex()] = append(rm.regions[region.GetRegionIndex()], pixel)
+	rm.pixels[pixel.Y][pixel.X] = region
 }
 
 func (rm *RegionMap) AddPixelToRegionMap(pixel Pixel, img image.Image) {
-	colorP := img.At(int(pixel.X), int(pixel.Y))
-	regionLeft, hasRegionLeft := rm.pixels[Pixel{pixel.X - 1, pixel.Y}]
-	colorLeft := img.At(int(pixel.X)-1, int(pixel.Y))
-	regionAbove, hasRegionAbove := rm.pixels[Pixel{pixel.X, pixel.Y - 1}]
-	colorAbove := img.At(int(pixel.X), int(pixel.Y)-1)
-	if hasRegionLeft && (rm.options.NoColorSeparation || ColorRegionEquivalence(colorP, colorLeft)) {
-		if hasRegionAbove && (rm.options.NoColorSeparation || ColorRegionEquivalence(colorP, colorAbove)) && *regionLeft != *regionAbove { // time to merge regions
-			pixelsInRegionAbove := rm.regions[*regionAbove]
-			// grow left region to fit the above region
-			mergedRegion := slices.Grow(*rm.regions[*regionLeft], len(*rm.regions[*regionLeft])+len(*pixelsInRegionAbove)+1)
-			// add all pixels in the above region to the left region
-			mergedRegion = append(mergedRegion, *pixelsInRegionAbove...)
-			rm.regions[*regionLeft] = &mergedRegion
+	regionColor := img.At(int(pixel.X), int(pixel.Y))
 
-			// fix pixel map for all pixels in the above region
-			rm.regions[*regionAbove] = nil
-			for _, v := range rm.regionPointers {
-				if v != regionAbove && *v == *regionAbove {
-					*v = *regionLeft
+	if !rm.GetPixelHasRegion(pixel) {
+		region := rm.NewRegion(pixel)
+
+		// iterative depth first traversal
+		pixelsToVisit := make([]Pixel, 1, 8)
+		pixelsToVisit[0] = pixel
+		for len(pixelsToVisit) > 0 {
+			cur := pixelsToVisit[len(pixelsToVisit)-1]
+			pixelsToVisit = pixelsToVisit[:len(pixelsToVisit)-1]
+			forNonDiagonalAdjacents(cur.X, cur.Y, len(rm.pixels[cur.Y]), len(rm.pixels), func(x, y uint16) {
+				p := Pixel{x, y}
+				if !rm.GetPixelHasRegion(p) && img.At(int(x), int(y)) == regionColor {
+					rm.AddPixelToRegion(p, region)
+					pixelsToVisit = append(pixelsToVisit, p)
 				}
-			}
-			*regionAbove = *regionLeft
-		}
-		rm.AddPixelToRegion(pixel, regionLeft)
-	} else if hasRegionAbove && (rm.options.NoColorSeparation || ColorRegionEquivalence(colorP, colorAbove)) {
-		rm.AddPixelToRegion(pixel, regionAbove)
-	} else {
-		rm.NewRegion(pixel)
-	}
-}
-
-// cleans up nil regions and rewrites the pixel map
-func (rm *RegionMap) CleanupRegionMap() {
-	rm.regions = slices.DeleteFunc(rm.regions, func(r *Region) bool { return r == nil })
-	pixelsInRegions := 0
-	for _, region := range rm.regions {
-		pixelsInRegions += len(*region)
-	}
-	// new fresh map
-	rm.pixels = make(map[Pixel]*RegionIndex, pixelsInRegions)
-	for regionIndex, region := range rm.regions {
-		for _, pixel := range *region {
-			newregion := new(RegionIndex)
-			*newregion = RegionIndex(regionIndex)
-			rm.pixels[pixel] = newregion
+			})
 		}
 	}
 }
 
 func (rm *RegionMap) GetPixelHasRegion(pixel Pixel) (hasRegion bool) {
-	_, hasRegion = rm.pixels[pixel]
-	return
+	return rm.pixels[pixel.Y][pixel.X] != 0
 }
 
-func (rm *RegionMap) GetRegionOfPixel(pixel Pixel) (regionIndex *RegionIndex, hasRegion bool) {
-	regionIndex, hasRegion = rm.pixels[pixel]
-	return
+func (rm *RegionMap) GetRegionOfPixel(pixel Pixel) (regionId RegionId) {
+	return rm.pixels[pixel.Y][pixel.X]
 }
 
-func (rm *RegionMap) GetRegion(region RegionIndex) Region {
-	if rp := rm.regions[region]; rp != nil {
-		return *rp
+func (rm *RegionMap) GetRegion(region RegionId) Region {
+	if rp := rm.regions[region.GetRegionIndex()]; rp != nil {
+		return rp
 	}
 	return nil
 }
 
-func (rm *RegionMap) GetRegions() []*Region {
+func (rm *RegionMap) GetRegions() []Region {
 	return rm.regions
 }
 

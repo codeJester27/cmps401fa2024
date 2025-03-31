@@ -22,9 +22,9 @@ static func generate_nodes(json: Variant) -> Node:
 		sprite.texture = ImageTexture.create_from_image(img)
 		region.add_child(sprite)
 		var collision = CollisionPolygon2D.new()
-		var mesh = item["mesh"] as Array
-		var vectormesh = mesh.map(func(v: Dictionary): return Vector2(v["x"], v["y"]))
-		collision.polygon = vectormesh
+		var shape = item["shape"] as Array
+		var vectorshape = shape.map(func(v: Dictionary): return Vector2(v["x"], v["y"]))
+		collision.polygon = vectorshape
 		var col = StaticBody2D.new()
 		col.name = "Collider"
 		col.add_child(collision)
@@ -48,8 +48,8 @@ static func generate_nodes(json: Variant) -> Node:
 	return level
 
 static func checkItem(item: Variant) -> bool:
-	return item is Dictionary and item.get("regionImage") is String and item.get("mesh") is Array \
-		and item["mesh"].all(func(m): return m is Dictionary and m.has_all(["x", "y"])) and item.has_all(["cornerX", "cornerY"])
+	return item is Dictionary and item.get("regionImage") is String and item.get("shape") is Array \
+		and item["shape"].all(func(m): return m is Dictionary and m.has_all(["x", "y"])) and item.has_all(["cornerX", "cornerY"])
 
 class GeneratedLevel extends Node:
 	var regions: Array

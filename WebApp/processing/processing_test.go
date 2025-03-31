@@ -28,8 +28,8 @@ func generateRegion(img image.Image) *Region {
 	return &region
 }
 
-func generateMesh(img image.Image) *[]Vertex {
-	mesh := make([]Vertex, 0, img.Bounds().Dx()*img.Bounds().Dy())
+func generateShape(img image.Image) *[]Vertex {
+	shape := make([]Vertex, 0, img.Bounds().Dx()*img.Bounds().Dy())
 	var x, y int
 
 Y:
@@ -42,7 +42,7 @@ Y:
 	}
 
 	for {
-		mesh = append(mesh, Vertex{uint16(x), uint16(y)})
+		shape = append(shape, Vertex{uint16(x), uint16(y)})
 		c := color.NRGBAModel.Convert(img.At(x, y))
 		switch c {
 		case Red:
@@ -69,22 +69,22 @@ Y:
 			panic("your vertex map sucks")
 		}
 
-		if mesh[0].X == uint16(x) && mesh[0].Y == uint16(y) {
+		if shape[0].X == uint16(x) && shape[0].Y == uint16(y) {
 			break
 		}
 	}
 
-	return &mesh
+	return &shape
 }
 
-func generateTestResultImage(name string, mesh *[]Vertex) error {
-	file, err := os.Create(fmt.Sprintf("./test_images/test_out_%s.gif", name))
+func generateTestResultImage(name string, shape *[]Vertex) error {
+	file, err := os.Create(fmt.Sprintf("./create_shape_test_images/test_out_%s.gif", name))
 	if err != nil {
 		return err
 	}
 
 	bounds := image.Rectangle{Min: image.Pt(65535, 65535), Max: image.Pt(0, 0)}
-	for _, pixel := range *mesh {
+	for _, pixel := range *shape {
 		if pixel.X+1 < uint16(bounds.Min.X) {
 			bounds.Min.X = int(pixel.X)
 		}
@@ -100,13 +100,13 @@ func generateTestResultImage(name string, mesh *[]Vertex) error {
 	}
 	plt := color.Palette{White, Black, Red}
 	baseImg := image.NewPaletted(bounds, plt)
-	images := make([]*image.Paletted, len(*mesh))
-	delays := make([]int, len(*mesh))
-	for _, v := range *mesh {
+	images := make([]*image.Paletted, len(*shape))
+	delays := make([]int, len(*shape))
+	for _, v := range *shape {
 		baseImg.Set(int(v.X), int(v.Y), Black)
 	}
 
-	for i, v := range *mesh {
+	for i, v := range *shape {
 		img := *baseImg
 		img.Pix = make([]uint8, len(baseImg.Pix))
 		copy(img.Pix, baseImg.Pix)
@@ -135,14 +135,14 @@ func generateTestResultImage(name string, mesh *[]Vertex) error {
 
 var vertexMapNameRegex = regexp.MustCompile(`^test_(\w+)_vertexmap`)
 
-func TestRegion_CreateMesh(t *testing.T) {
+func TestRegion_CreateShape(t *testing.T) {
 	tests := make([]struct {
-		name     string
-		region   *Region
-		wantMesh *[]Vertex
+		name      string
+		region    *Region
+		wantShape *[]Vertex
 	}, 0)
 
-	testDir, err := os.ReadDir("./test_images")
+	testDir, err := os.ReadDir("./create_shape_test_images")
 
 	if err != nil {
 		panic(err)
@@ -153,9 +153,9 @@ func TestRegion_CreateMesh(t *testing.T) {
 			matches := vertexMapNameRegex.FindStringSubmatch(v.Name())
 			if matches != nil {
 				tests = append(tests, struct {
-					name     string
-					region   *Region
-					wantMesh *[]Vertex
+					name      string
+					region    *Region
+					wantShape *[]Vertex
 				}{name: matches[1]})
 			}
 		}
@@ -163,7 +163,7 @@ func TestRegion_CreateMesh(t *testing.T) {
 
 	// use supplied test images
 	for i, tt := range tests {
-		regionf, err := os.Open(fmt.Sprintf("./test_images/test_%s.png", tt.name))
+		regionf, err := os.Open(fmt.Sprintf("./create_shape_test_images/test_%s.png", tt.name))
 		if err != nil {
 			panic(err)
 		}
@@ -175,7 +175,7 @@ func TestRegion_CreateMesh(t *testing.T) {
 
 		tests[i].region = generateRegion(regionimg)
 
-		vertexf, err := os.Open(fmt.Sprintf("./test_images/test_%s_vertexmap.png", tt.name))
+		vertexf, err := os.Open(fmt.Sprintf("./create_shape_test_images/test_%s_vertexmap.png", tt.name))
 		if err != nil {
 			panic(err)
 		}
@@ -185,45 +185,45 @@ func TestRegion_CreateMesh(t *testing.T) {
 			panic(err)
 		}
 
-		tests[i].wantMesh = generateMesh(verteximg)
+		tests[i].wantShape = generateShape(verteximg)
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotMeshP, err := tt.region.CreateMesh()
+			gotShapeP, err := tt.region.CreateShape()
 			if err != nil {
 				t.Fatalf("Error: %s", err)
 			}
-			gotMesh := gotMeshP
-			wantMesh := *tt.wantMesh
+			gotShape := gotShapeP
+			wantShape := *tt.wantShape
 
 			fail := func() {
-				if generateTestResultImage(tt.name, &gotMesh) == nil {
+				if generateTestResultImage(tt.name, &gotShape) == nil {
 					t.Logf("Generated test result image for %s", tt.name)
 				}
-				t.Fatalf("Region.CreateMesh() = %v\n want %v", gotMesh, wantMesh)
+				t.Fatalf("Region.CreateShape() = %v\n want %v", gotShape, wantShape)
 			}
 
-			firstIndex := slices.Index(wantMesh, gotMesh[0])
-			if firstIndex == -1 || len(wantMesh) != len(gotMesh) {
+			firstIndex := slices.Index(wantShape, gotShape[0])
+			if firstIndex == -1 || len(wantShape) != len(gotShape) {
 				fail()
 			}
 
-			length := len(gotMesh)
-			if gotMesh[1] != wantMesh[(firstIndex+1)%length] {
+			length := len(gotShape)
+			if gotShape[1] != wantShape[(firstIndex+1)%length] {
 				// second elements don't match, let's try reverse?
-				slices.Reverse(wantMesh)
+				slices.Reverse(wantShape)
 				firstIndex = (length - 1) - firstIndex
-				if gotMesh[1] != wantMesh[(firstIndex+1)%length] {
+				if gotShape[1] != wantShape[(firstIndex+1)%length] {
 					fail()
 				}
 			}
 			for i := 2; i < length; i++ {
-				if gotMesh[i] != wantMesh[(firstIndex+i)%length] {
+				if gotShape[i] != wantShape[(firstIndex+i)%length] {
 					fail()
 				}
 			}
-			if generateTestResultImage(tt.name, &gotMesh) == nil {
+			if generateTestResultImage(tt.name, &gotShape) == nil {
 				t.Logf("Generated test result image for %s", tt.name)
 			}
 		})
